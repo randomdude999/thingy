@@ -167,10 +167,10 @@ impl Solver {
     pub fn minimax(&mut self, b: &Board, player: i8, depth: i32) -> ((i32,f32),Option<Board>) {
         //assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
-        if let Some((i,b)) = self.cache.get(&b.hash) { return (*i,b.clone()); }
         if depth >= 5 {
             return ((b.score, b.score as f32), None);
         }
+        if let Some((i,b)) = self.cache.get(&b.hash) { return (*i,b.clone()); }
         let f = b.clone().moves(player);
         let mut child_avg = 0.0;
         let mut best_so_far = (0,0.0);
