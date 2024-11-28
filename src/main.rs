@@ -7,22 +7,22 @@ pub const HEIGHT: usize = 5;
 pub const NEIGHBORS: i32 = 3;
 
 static mut ZOBRIST: [u64; WIDTH*HEIGHT*4] = [0; WIDTH*HEIGHT*4];
-fn get_zobrist(ind: usize, el: i8) -> u64 {
+fn get_zobrist(ind: usize, el: u8) -> u64 {
     if el == 0 {
         0
     } else {
-        let el_ind = (el + 2) - (el >= 0) as i8;
-        //assert!(0 <= el_ind && el_ind < 4);
-        unsafe { ZOBRIST[ind*4 + el_ind as usize] }
+        unsafe { ZOBRIST[ind*4 + (el & 3) as usize] }
     }
 }
 
 #[derive(Debug,Clone)]
 pub struct Board {
-    // 0: empty,
-    // 1/2: player 1/2 upright,
-    // -1/-2: player 1/2 flipped
-    cells: [i8;WIDTH*HEIGHT],
+    // bit 0: player 1/2
+    // bit 1: upright/flipped
+    // bit 2: empty/full
+    // thus: empty is still value 0
+    // "ignore flippedness" is &5
+    cells: [u8;WIDTH*HEIGHT],
     // precomputed score
     score: i32,
     // precomp hash
@@ -40,37 +40,37 @@ impl Board {
             let piece = self.cells[idx];
             let sum = self.neighbor_count(idx,x,y);
             if sum >= NEIGHBORS {
-                if piece == -1 { score += 1; }
-                if piece == -2 { score -= 1; }
+                if piece == 6 { score += 1; }
+                if piece == 7 { score -= 1; }
             }
         }
         score
     }
     pub fn neighbor_count(&self, idx: usize, x: usize, y: usize) -> i32 {
-        let piece = self.cells[idx].abs();
+        let piece = self.cells[idx] & 5;
         let mut sum = 0;
         let w = WIDTH;
         let h = HEIGHT;
-        sum += (x > 0   && self.cells[idx-1].abs() == piece) as i32;
-        sum += (x < w-1 && self.cells[idx+1].abs() == piece) as i32;
-        sum += (y > 0   && self.cells[idx-w].abs() == piece) as i32;
-        sum += (y < h-1 && self.cells[idx+w].abs() == piece) as i32;
+        sum += (x > 0   && self.cells[idx-1] & 5 == piece) as i32;
+        sum += (x < w-1 && self.cells[idx+1] & 5 == piece) as i32;
+        sum += (y > 0   && self.cells[idx-w] & 5 == piece) as i32;
+        sum += (y < h-1 && self.cells[idx+w] & 5 == piece) as i32;
         sum
     }
     pub fn update(&mut self, mod_idx: usize, idx: usize, x: usize, y: usize, new_place: bool) {
         let piece = self.cells[idx];
         // if this piece isn't the same owner as the added piece,
         // it can't possibly change the score or get flipped
-        if self.cells[idx].abs() != self.cells[mod_idx].abs() { return; }
+        if self.cells[idx] & 5 != self.cells[mod_idx] & 5 { return; }
         let sum = self.neighbor_count(idx,x,y);
         if sum >= NEIGHBORS {
-            if piece > 0 {
-                self.cells[idx] *= -1;
-                self.hash ^= get_zobrist(idx, piece) ^ get_zobrist(idx, -piece);
+            if piece & 2 == 0 {
+                self.cells[idx] |= 2;
+                self.hash ^= get_zobrist(idx, piece) ^ get_zobrist(idx, piece | 2);
             }
             if sum == NEIGHBORS || new_place {
-                if piece.abs() == 1 { self.score += 1; }
-                if piece.abs() == 2 { self.score -= 1; }
+                if piece & 1 == 0 { self.score += 1; }
+                if piece & 1 == 1 { self.score -= 1; }
             }
         }
     }
@@ -88,14 +88,14 @@ impl Board {
     pub fn update_delete(&mut self, mod_idx: usize, idx: usize, x: usize, y: usize) {
         // if this piece isn't the same owner as the removed piece,
         // it can't possibly decrease the score
-        if self.cells[idx].abs() != self.cells[mod_idx].abs() { return; }
-        let owner = self.cells[idx].abs();
+        if self.cells[idx] & 5 != self.cells[mod_idx] & 5 { return; }
+        let owner = self.cells[idx] & 1;
         let sum = self.neighbor_count(idx, x, y);
         if sum == NEIGHBORS {
             // this piece is exactly "borderline", so the removal
             // will make it non-scoring, losing a point
-            if owner == 1 { self.score -= 1; }
-            if owner == 2 { self.score += 1; }
+            if owner == 0 { self.score -= 1; }
+            if owner == 1 { self.score += 1; }
         }
     }
     // inform the score counter that a swap moved a piece that might possibly affect the score
@@ -116,24 +116,25 @@ impl Board {
             for c in 0..self.cells.len() {
                 if self.cells[c] == 0 {
                     let mut b = self.clone();
-                    b.cells[c] = player+1;
-                    b.hash ^= get_zobrist(c, player+1);
+                    b.cells[c] = 4 + (player as u8);
+                    b.hash ^= get_zobrist(c, b.cells[c]);
                     b.propagate(c);
                     yield b;
                 }
             }
             for i in 0..self.cells.len() {
-                if self.cells[i] <= 0 { continue; }
+                // is this cell filled and upright?
+                if self.cells[i] & 6 != 4 { continue; }
                 for j in i+1..self.cells.len() {
-                    if self.cells[j] <= 0 { continue; }
+                    if self.cells[j] & 6 != 4 { continue; }
                     let mut b = self.clone();
                     b.propagate_delete(i);
                     b.propagate_delete(j);
                     let (el1, el2) = (b.cells[i], b.cells[j]);
                     b.cells.swap(i,j);
-                    b.cells[i] *= -1;
-                    b.cells[j] *= -1;
-                    b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, -el1) ^ get_zobrist(j, el2) ^ get_zobrist(i, -el2);
+                    b.cells[i] |= 2;
+                    b.cells[j] |= 2;
+                    b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1|2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2|2);
                     b.propagate(i);
                     b.propagate(j);
                     yield b;
@@ -152,7 +153,7 @@ impl std::fmt::Display for Board {
         writeln!(f, "===")?;
         for (i,c) in self.cells.iter().enumerate() {
             if i != 0 && i % WIDTH == 0 { writeln!(f)?; }
-            write!(f, "{}", b"OX.xo"[(c+2) as usize] as char)?;
+            write!(f, "{}", b".???xoXO"[*c as usize] as char)?;
         }
         Ok(())
     }
