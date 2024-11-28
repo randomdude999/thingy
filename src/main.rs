@@ -1,8 +1,17 @@
 #![feature(gen_blocks)]
 
+use rand::SeedableRng;
+
 pub const WIDTH: usize = 5;
 pub const HEIGHT: usize = 5;
 pub const NEIGHBORS: i32 = 3;
+
+static mut ZOBRIST: [u64; WIDTH*HEIGHT*4] = [0; WIDTH*HEIGHT*4];
+fn get_zobrist(ind: usize, el: i8) -> u64 {
+    let el_ind = (el + 2) - (el >= 0) as i8;
+    //assert!(el == 0 || (0 <= el_ind && el_ind < 4));
+    if el == 0 { 0 } else { unsafe { ZOBRIST[ind*4 + el_ind as usize] } }
+}
 
 #[derive(Debug,Clone)]
 pub struct Board {
@@ -12,10 +21,12 @@ pub struct Board {
     cells: [i8;WIDTH*HEIGHT],
     // precomputed score
     score: i32,
+    // precomp hash
+    hash: u64,
 }
 impl Board {
     pub fn new() -> Self {
-        Self { cells: [0; WIDTH*HEIGHT], score: 0, }
+        Self { cells: [0; WIDTH*HEIGHT], score: 0, hash: 0, }
     }
     pub fn score(&self) -> i32 {
         let mut score = 0;
@@ -51,7 +62,10 @@ impl Board {
         if self.cells[idx].abs() != self.cells[mod_idx].abs() { return; }
         let sum = self.neighbor_count(idx,x,y);
         if sum >= NEIGHBORS {
-            if piece > 0 { self.cells[idx] *= -1; }
+            if piece > 0 {
+                self.cells[idx] *= -1;
+                self.hash ^= get_zobrist(idx, piece) ^ get_zobrist(idx, -piece);
+            }
             if sum == NEIGHBORS || new_place {
                 if piece.abs() == 1 { self.score += 1; }
                 if piece.abs() == 2 { self.score -= 1; }
@@ -104,8 +118,11 @@ impl Board {
                 if self.cells[c] == 0 {
                     let mut b = self.clone();
                     b.cells[c] = player+1;
+                    b.hash ^= get_zobrist(c, player+1);
+                    //assert!(b.hash == b.hash());
                     //println!("FUCK\n{}", b);
                     b.propagate(c);
+                    //assert!(b.hash == b.hash());
                     //println!("place {}", c);
                     //b.score();
                     yield b;
@@ -125,11 +142,15 @@ impl Board {
                     //println!("{},{}:\n{}", i,j,b);
                     b.propagate_delete(i);
                     b.propagate_delete(j);
+                    let (el1, el2) = (b.cells[i], b.cells[j]);
                     b.cells.swap(i,j);
                     b.cells[i] *= -1;
                     b.cells[j] *= -1;
+                    b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, -el1) ^ get_zobrist(j, el2) ^ get_zobrist(i, -el2);
+                    //assert!(b.hash == b.hash());
                     b.propagate(i);
                     b.propagate(j);
+                    //assert!(b.hash == b.hash());
                     //println!("swap {},{}", i, j);
                     //b.score();
                     //if b.cells[i] > 0 { b.cells[i] *= -1; }
@@ -139,12 +160,15 @@ impl Board {
             }
         }.into_iter();
     }
-    pub fn hash(&self) -> u128 {
-        self.cells.iter().fold(0u128,|a,e| {
+    pub fn hash(&self) -> u64 {
+        /*self.cells.iter().fold(0u128,|a,e| {
             (a << 3) | ((e+2) as u128)
-        })
+        })*/
+        self.cells.iter().enumerate().fold(0u64, |a, (i, &e)| a ^ get_zobrist(i, e))
     }
 }
+type BoardHash = u64;
+
 impl std::fmt::Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "===")?;
@@ -159,11 +183,12 @@ impl std::fmt::Display for Board {
 
 #[derive(Default)]
 pub struct Solver {
-    cache: std::collections::HashMap<u128, ((i32,f32),Option<Board>)>,
+    cache: std::collections::HashMap<BoardHash, ((i32,f32),Option<Board>)>,
 }
 impl Solver {
     pub fn minimax(&mut self, b: &Board, player: i8, depth: i32) -> ((i32,f32),Option<Board>) {
-        let b_hash = b.hash();
+        let b_hash = b.hash;
+        //assert!(b.hash() == b.hash, "{}", b_hash);
         if let Some((i,b)) = self.cache.get(&b_hash) { return (*i,b.clone()); }
         let b_score = b.score;
         if depth >= 5 {
@@ -202,6 +227,15 @@ impl Solver {
     }
 }
 
+fn init_zobrist() {
+    use rand::RngCore;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
+    for i in 0..WIDTH*HEIGHT*4 {
+        unsafe {
+            ZOBRIST[i] = rng.next_u64();
+        }
+    }
+}
 
 fn main() {
     //use rand::Rng;
@@ -210,6 +244,7 @@ fn main() {
     let mut b = Board::new();
     let mut solver = Solver::default();
     let mut turn = 0;
+    init_zobrist();
     loop {
         solver.cache.clear();
         if false && turn&1 == 1 {
