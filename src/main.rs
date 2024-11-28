@@ -15,6 +15,18 @@ fn get_zobrist(ind: usize, el: u8) -> u64 {
     }
 }
 
+/// returns bitmasks of positions with 3 and 2 neighbors
+pub fn count_neighbors(board: u32) -> (u32, u32) {
+    let a = (board >> 1) & 0b01111_01111_01111_01111_01111 & board; // has left neighbor
+    let b = (board << 1) & 0b11110_11110_11110_11110_11110 & board; // has right neighbor
+    let c = (board >> 5) & board; // has top neighbor
+    let d = (board << 5) & board; // has bottom neighbor
+    // magic formulas by the walrus
+    let has_2_neighs = (a&b) | (c&d) | ((a|b)&(c|d));
+    let has_3_neighs = ((a&b)&(c|d)) | ((a|b)&(c&d));
+    (has_3_neighs, has_2_neighs)
+}
+
 #[derive(Debug,Clone)]
 pub struct Board {
     // bit 0: player 1/2
@@ -22,128 +34,87 @@ pub struct Board {
     // bit 2: empty/full
     // thus: empty is still value 0
     // "ignore flippedness" is &5
-    cells: [u8;WIDTH*HEIGHT],
+    //cells: [u8;WIDTH*HEIGHT],
+    // bitboards
+    upright_cells: [u32; 2],
+    flipped_cells: [u32; 2],
     // precomputed score
-    score: i32,
+    //score: i32,
     // precomp hash
     hash: u64,
 }
 impl Board {
     pub fn new() -> Self {
-        Self { cells: [0; WIDTH*HEIGHT], score: 0, hash: 0, }
+        Self { upright_cells: [0, 0], flipped_cells: [0, 0], hash: 0, }
     }
-    pub fn score(&self) -> i32 {
-        let mut score = 0;
-        for idx in 0..self.cells.len() {
-            let x = idx%WIDTH;
-            let y = idx/WIDTH;
-            let piece = self.cells[idx];
-            let sum = self.neighbor_count(idx,x,y);
-            if sum >= NEIGHBORS {
-                if piece == 6 { score += 1; }
-                if piece == 7 { score -= 1; }
-            }
-        }
-        score
+    pub fn score_one_player(&self, player: usize) -> (i32, i32) {
+        let board = self.upright_cells[player] | self.flipped_cells[player];
+        let (has_3_neighs, has_2_neighs) = count_neighbors(board);
+        return (has_3_neighs.count_ones() as i32, has_2_neighs.count_ones() as i32);
     }
-    pub fn neighbor_count(&self, idx: usize, x: usize, y: usize) -> i32 {
-        let piece = self.cells[idx] & 5;
-        let mut sum = 0;
-        let w = WIDTH;
-        let h = HEIGHT;
-        sum += (x > 0   && self.cells[idx-1] & 5 == piece) as i32;
-        sum += (x < w-1 && self.cells[idx+1] & 5 == piece) as i32;
-        sum += (y > 0   && self.cells[idx-w] & 5 == piece) as i32;
-        sum += (y < h-1 && self.cells[idx+w] & 5 == piece) as i32;
-        sum
+    pub fn score(&self) -> (i32, i32) {
+        let s1 = self.score_one_player(0);
+        let s2 = self.score_one_player(1);
+        (s1.0 - s2.0, s1.1 - s2.1)
     }
-    pub fn update(&mut self, mod_idx: usize, idx: usize, x: usize, y: usize, new_place: bool) {
-        let piece = self.cells[idx];
-        // if this piece isn't the same owner as the added piece,
-        // it can't possibly change the score or get flipped
-        if self.cells[idx] & 5 != self.cells[mod_idx] & 5 { return; }
-        let sum = self.neighbor_count(idx,x,y);
-        if sum >= NEIGHBORS {
-            if piece & 2 == 0 {
-                self.cells[idx] |= 2;
-                self.hash ^= get_zobrist(idx, piece) ^ get_zobrist(idx, piece | 2);
-            }
-            if sum == NEIGHBORS || new_place {
-                if piece & 1 == 0 { self.score += 1; }
-                if piece & 1 == 1 { self.score -= 1; }
+    pub fn propagate(&mut self, player: usize) {
+        let board = self.upright_cells[player] | self.flipped_cells[player];
+        let to_flip = count_neighbors(board).0 & self.upright_cells[player];
+        if to_flip != 0 {
+            self.upright_cells[player] ^= to_flip;
+            self.flipped_cells[player] ^= to_flip;
+            let mut tmp = to_flip;
+            while tmp != 0 {
+                let pos = tmp.trailing_zeros();
+                self.hash ^= get_zobrist(pos as usize, 4 + player as u8) ^ get_zobrist(pos as usize, 6 + player as u8);
+                tmp ^= 1<<pos;
             }
         }
     }
-    pub fn propagate(&mut self, idx: usize) {
-        let x = idx%WIDTH;
-        let y = idx/WIDTH;
-        let w = WIDTH;
-        let h = HEIGHT;
-        self.update(idx,idx, x,y, true);
-        if x > 0   { self.update(idx, idx-1,x-1,y, false); }
-        if x < w-1 { self.update(idx, idx+1,x+1,y, false); }
-        if y > 0   { self.update(idx, idx-w,x,y-1, false); }
-        if y < h-1 { self.update(idx, idx+w,x,y+1, false); }
-    }
-    pub fn update_delete(&mut self, mod_idx: usize, idx: usize, x: usize, y: usize) {
-        // if this piece isn't the same owner as the removed piece,
-        // it can't possibly decrease the score
-        if self.cells[idx] & 5 != self.cells[mod_idx] & 5 { return; }
-        let owner = self.cells[idx] & 1;
-        let sum = self.neighbor_count(idx, x, y);
-        if sum == NEIGHBORS {
-            // this piece is exactly "borderline", so the removal
-            // will make it non-scoring, losing a point
-            if owner == 0 { self.score -= 1; }
-            if owner == 1 { self.score += 1; }
-        }
-    }
-    // inform the score counter that a swap moved a piece that might possibly affect the score
-    pub fn propagate_delete(&mut self, idx: usize) {
-        //assert!(self.cells[idx] > 0);
-        let x = idx%WIDTH;
-        let y = idx/WIDTH;
-        let w = WIDTH;
-        let h = HEIGHT;
-        if x > 0   { self.update_delete(idx,idx-1,x-1,y); }
-        if x < w-1 { self.update_delete(idx,idx+1,x+1,y); }
-        if y > 0   { self.update_delete(idx,idx-w,x,y-1); }
-        if y < h-1 { self.update_delete(idx,idx+w,x,y+1); }
-    }
-    pub fn moves(self, player: i8) -> impl Iterator<Item = Board> {
-        // return statement because otherwise tree-sitter's indentation thingy gets fucked
-        return gen move {
-            for c in 0..self.cells.len() {
-                if self.cells[c] == 0 {
+    pub fn moves(self, player: usize) -> impl Iterator<Item = Board> {
+        gen move {
+            let empty = !(self.flipped_cells[0] | self.flipped_cells[1] | self.upright_cells[0] | self.upright_cells[1]);
+            for c in 0..25 {
+                if empty & (1<<c) != 0 {
                     let mut b = self.clone();
-                    b.cells[c] = 4 + (player as u8);
-                    b.hash ^= get_zobrist(c, b.cells[c]);
-                    b.propagate(c);
+                    b.upright_cells[player] |= 1<<c;
+                    b.hash ^= get_zobrist(c, 4 + player as u8);
+                    b.propagate(player as usize);
                     yield b;
                 }
             }
-            for i in 0..self.cells.len() {
-                // is this cell filled and upright?
-                if self.cells[i] & 6 != 4 { continue; }
-                for j in i+1..self.cells.len() {
-                    if self.cells[j] & 6 != 4 { continue; }
+            let swaplegal = self.upright_cells[0] | self.upright_cells[1];
+            for i in 0..25 {
+                if swaplegal & (1<<i) == 0 { continue; }
+                for j in i+1..25 {
+                    if swaplegal & (1<<j) == 0 { continue; }
                     let mut b = self.clone();
-                    b.propagate_delete(i);
-                    b.propagate_delete(j);
-                    let (el1, el2) = (b.cells[i], b.cells[j]);
-                    b.cells.swap(i,j);
-                    b.cells[i] |= 2;
-                    b.cells[j] |= 2;
+                    // 0 if cell i is owned by player 0, 1 if owned by player 1
+                    let i_player = (self.upright_cells[1] & (1<<i) != 0) as usize;
+                    let j_player = (self.upright_cells[1] & (1<<j) != 0) as usize;
+                    b.upright_cells[i_player] ^= 1<<i;
+                    b.upright_cells[j_player] ^= 1<<j;
+                    b.flipped_cells[i_player] |= 1<<j;
+                    b.flipped_cells[j_player] |= 1<<i;
+                    let el1 = 4 + i_player as u8;
+                    let el2 = 4 + j_player as u8;
                     b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1|2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2|2);
-                    b.propagate(i);
-                    b.propagate(j);
+                    b.propagate(player as usize);
                     yield b;
                 }
             }
-        }.into_iter();
+        }.into_iter()
     }
     pub fn hash(&self) -> u64 {
-        self.cells.iter().enumerate().fold(0u64, |a, (i, &e)| a ^ get_zobrist(i, e))
+        //self.cells.iter().enumerate().fold(0u64, |a, (i, &e)| a ^ get_zobrist(i, e))
+        let mut hash = 0u64;
+        for i in 0..25 {
+            if self.upright_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 4); }
+            if self.upright_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 5); }
+            if self.flipped_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 6); }
+            if self.flipped_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 7); }
+        }
+        hash
     }
 }
 type BoardHash = u64;
@@ -151,9 +122,14 @@ type BoardHash = u64;
 impl std::fmt::Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "===")?;
-        for (i,c) in self.cells.iter().enumerate() {
+        for i in 0..25 {
             if i != 0 && i % WIDTH == 0 { writeln!(f)?; }
-            write!(f, "{}", b".???xoXO"[*c as usize] as char)?;
+            let mut ch = '.';
+            if self.upright_cells[0] & (1<<i) != 0 { ch = 'x'; }
+            if self.upright_cells[1] & (1<<i) != 0 { ch = 'o'; }
+            if self.flipped_cells[0] & (1<<i) != 0 { ch = 'X'; }
+            if self.flipped_cells[1] & (1<<i) != 0 { ch = 'O'; }
+            write!(f, "{}", ch)?;
         }
         Ok(())
     }
@@ -164,11 +140,11 @@ pub struct Solver {
     cache: ahash::AHashMap<BoardHash, ((i32,f32),Option<Board>)>,
 }
 impl Solver {
-    pub fn minimax(&mut self, b: &Board, player: i8, depth: i32) -> ((i32,f32),Option<Board>) {
-        //assert!(b.hash() == b.hash);
+    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32) -> ((i32,f32),Option<Board>) {
+        debug_assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
         if depth >= 5 {
-            return ((b.score, b.score as f32), None);
+            return ((b.score().0, b.score().0 as f32), None);
         }
         if let Some((i,b)) = self.cache.get(&b.hash) { return (*i,b.clone()); }
         let f = b.clone().moves(player);
@@ -192,7 +168,7 @@ impl Solver {
         }
         child_avg /= l as f32;
         best_so_far.1 = child_avg;
-        if best_board.is_none() { best_so_far.0 = b.score; best_so_far.1 = best_so_far.0 as f32; }
+        if best_board.is_none() { best_so_far.0 = b.score().0; best_so_far.1 = best_so_far.0 as f32; }
         self.cache.insert(b.hash, (best_so_far, best_board.clone()));
         (best_so_far,best_board)
     }
@@ -228,6 +204,6 @@ fn main() {
         }
         turn += 1;
         println!("{}", b);
-        println!("Score {}", b.score);
+        println!("Score {:?}", b.score());
     }
 }
