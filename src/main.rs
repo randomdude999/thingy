@@ -8,9 +8,13 @@ pub const NEIGHBORS: i32 = 3;
 
 static mut ZOBRIST: [u64; WIDTH*HEIGHT*4] = [0; WIDTH*HEIGHT*4];
 fn get_zobrist(ind: usize, el: i8) -> u64 {
-    let el_ind = (el + 2) - (el >= 0) as i8;
-    //assert!(el == 0 || (0 <= el_ind && el_ind < 4));
-    if el == 0 { 0 } else { unsafe { ZOBRIST[ind*4 + el_ind as usize] } }
+    if el == 0 {
+        0
+    } else {
+        let el_ind = (el + 2) - (el >= 0) as i8;
+        //assert!(0 <= el_ind && el_ind < 4);
+        unsafe { ZOBRIST[ind*4 + el_ind as usize] }
+    }
 }
 
 #[derive(Debug,Clone)]
