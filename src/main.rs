@@ -183,7 +183,7 @@ impl std::fmt::Display for Board {
 
 #[derive(Default)]
 pub struct Solver {
-    cache: std::collections::HashMap<BoardHash, ((i32,f32),Option<Board>)>,
+    cache: ahash::AHashMap<BoardHash, ((i32,f32),Option<Board>)>,
 }
 impl Solver {
     pub fn minimax(&mut self, b: &Board, player: i8, depth: i32) -> ((i32,f32),Option<Board>) {
