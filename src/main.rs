@@ -40,7 +40,6 @@ impl Board {
                 if piece == -2 { score -= 1; }
             }
         }
-        assert!(score == self.score, "wat {} != {}\n{}", score, self.score, self);
         score
     }
     pub fn neighbor_count(&self, idx: usize, x: usize, y: usize) -> i32 {
@@ -56,7 +55,6 @@ impl Board {
     }
     pub fn update(&mut self, mod_idx: usize, idx: usize, x: usize, y: usize, new_place: bool) {
         let piece = self.cells[idx];
-        //if piece <= 0 { return; }
         // if this piece isn't the same owner as the added piece,
         // it can't possibly change the score or get flipped
         if self.cells[idx].abs() != self.cells[mod_idx].abs() { return; }
@@ -69,7 +67,6 @@ impl Board {
             if sum == NEIGHBORS || new_place {
                 if piece.abs() == 1 { self.score += 1; }
                 if piece.abs() == 2 { self.score -= 1; }
-                //println!("score inc, piece={} at {}, score={}", piece, idx, self.score);
             }
         }
     }
@@ -91,17 +88,15 @@ impl Board {
         let owner = self.cells[idx].abs();
         let sum = self.neighbor_count(idx, x, y);
         if sum == NEIGHBORS {
-            // this piece is exactly "borderline", so the removal will make it non-scoring, losing
-            // a point
+            // this piece is exactly "borderline", so the removal
+            // will make it non-scoring, losing a point
             if owner == 1 { self.score -= 1; }
             if owner == 2 { self.score += 1; }
-            //println!("score decrease, piece at {} score={}", idx, self.score);
         }
     }
     // inform the score counter that a swap moved a piece that might possibly affect the score
     pub fn propagate_delete(&mut self, idx: usize) {
-        // precondition: self.cells[idx] == 1 or 2
-        assert!(self.cells[idx] > 0);
+        //assert!(self.cells[idx] > 0);
         let x = idx%WIDTH;
         let y = idx/WIDTH;
         let w = WIDTH;
@@ -119,27 +114,15 @@ impl Board {
                     let mut b = self.clone();
                     b.cells[c] = player+1;
                     b.hash ^= get_zobrist(c, player+1);
-                    //assert!(b.hash == b.hash());
-                    //println!("FUCK\n{}", b);
                     b.propagate(c);
-                    //assert!(b.hash == b.hash());
-                    //println!("place {}", c);
-                    //b.score();
                     yield b;
                 }
             }
-            /*let mut swaps = vec![];
-            for i in 0..self.cells.len() {
-                if self.cells[i] > 0 {
-                    swaps.push(i);
-                }
-            }*/
             for i in 0..self.cells.len() {
                 if self.cells[i] <= 0 { continue; }
                 for j in i+1..self.cells.len() {
                     if self.cells[j] <= 0 { continue; }
                     let mut b = self.clone();
-                    //println!("{},{}:\n{}", i,j,b);
                     b.propagate_delete(i);
                     b.propagate_delete(j);
                     let (el1, el2) = (b.cells[i], b.cells[j]);
@@ -147,23 +130,14 @@ impl Board {
                     b.cells[i] *= -1;
                     b.cells[j] *= -1;
                     b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, -el1) ^ get_zobrist(j, el2) ^ get_zobrist(i, -el2);
-                    //assert!(b.hash == b.hash());
                     b.propagate(i);
                     b.propagate(j);
-                    //assert!(b.hash == b.hash());
-                    //println!("swap {},{}", i, j);
-                    //b.score();
-                    //if b.cells[i] > 0 { b.cells[i] *= -1; }
-                    //if b.cells[j] > 0 { b.cells[j] *= -1; }
                     yield b;
                 }
             }
         }.into_iter();
     }
     pub fn hash(&self) -> u64 {
-        /*self.cells.iter().fold(0u128,|a,e| {
-            (a << 3) | ((e+2) as u128)
-        })*/
         self.cells.iter().enumerate().fold(0u64, |a, (i, &e)| a ^ get_zobrist(i, e))
     }
 }
@@ -176,7 +150,6 @@ impl std::fmt::Display for Board {
             if i != 0 && i % WIDTH == 0 { writeln!(f)?; }
             write!(f, "{}", b"OX.xo"[(c+2) as usize] as char)?;
         }
-        //writeln!(f)
         Ok(())
     }
 }
@@ -187,12 +160,11 @@ pub struct Solver {
 }
 impl Solver {
     pub fn minimax(&mut self, b: &Board, player: i8, depth: i32) -> ((i32,f32),Option<Board>) {
-        let b_hash = b.hash;
-        //assert!(b.hash() == b.hash, "{}", b_hash);
-        if let Some((i,b)) = self.cache.get(&b_hash) { return (*i,b.clone()); }
-        let b_score = b.score;
+        //assert!(b.hash() == b.hash);
+        //assert!(b.score() == b.score);
+        if let Some((i,b)) = self.cache.get(&b.hash) { return (*i,b.clone()); }
         if depth >= 5 {
-            return ((b_score, b_score as f32), None);
+            return ((b.score, b.score as f32), None);
         }
         let f = b.clone().moves(player);
         let mut child_avg = 0.0;
@@ -201,9 +173,6 @@ impl Solver {
         let mut l = 0;
         for (_idx,i) in f.enumerate() {
             l += 1;
-            if depth <= 1 {
-                //println!("depth={} i={}/{} best={:?}", depth,idx,l, best_so_far);
-            }
             let (s,_b) = self.minimax(&i,player^1,depth+1);
             child_avg += s.1;
             let better = if player == 0 {
@@ -215,14 +184,11 @@ impl Solver {
                 best_so_far = s;
                 best_board = Some(i);
             }
-            //if (player == 0 && best_so_far > 0) || (player == 1 && best_so_far < 0) {
-                //break; 
-            //}
         }
         child_avg /= l as f32;
         best_so_far.1 = child_avg;
-        if best_board.is_none() { best_so_far.0 = b_score; best_so_far.1 = best_so_far.0 as f32; }
-        self.cache.insert(b_hash, (best_so_far, best_board.clone()));
+        if best_board.is_none() { best_so_far.0 = b.score; best_so_far.1 = best_so_far.0 as f32; }
+        self.cache.insert(b.hash, (best_so_far, best_board.clone()));
         (best_so_far,best_board)
     }
 }
@@ -238,7 +204,6 @@ fn init_zobrist() {
 }
 
 fn main() {
-    //use rand::Rng;
     use rand::seq::SliceRandom;
     let mut rng = rand::thread_rng();
     let mut b = Board::new();
