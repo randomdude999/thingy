@@ -137,25 +137,25 @@ impl std::fmt::Display for Board {
 
 #[derive(Default)]
 pub struct Solver {
-    cache: ahash::AHashMap<BoardHash, ((i32,f32),Option<Board>)>,
+    cache: ahash::AHashMap<BoardHash, ((i32,i32),Option<Board>)>,
 }
 impl Solver {
-    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32) -> ((i32,f32),Option<Board>) {
+    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32) -> ((i32,i32),Option<Board>) {
         debug_assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
         if depth >= 5 {
-            return ((b.score().0, b.score().0 as f32), None);
+            return (b.score(), None);
         }
         if let Some((i,b)) = self.cache.get(&b.hash) { return (*i,b.clone()); }
         let f = b.clone().moves(player);
-        let mut child_avg = 0.0;
-        let mut best_so_far = (0,0.0);
+        //let mut child_avg = 0.0;
+        let mut best_so_far = (0,0);
         let mut best_board = None;
         let mut l = 0;
         for (_idx,i) in f.enumerate() {
             l += 1;
             let (s,_b) = self.minimax(&i,player^1,depth+1);
-            child_avg += s.1;
+            //child_avg += s.1;
             let better = if player == 0 {
                 s > best_so_far
             } else {
@@ -166,9 +166,9 @@ impl Solver {
                 best_board = Some(i);
             }
         }
-        child_avg /= l as f32;
-        best_so_far.1 = child_avg;
-        if best_board.is_none() { best_so_far.0 = b.score().0; best_so_far.1 = best_so_far.0 as f32; }
+        //child_avg /= l as f32;
+        //best_so_far.1 = child_avg;
+        if best_board.is_none() { best_so_far = b.score(); }
         self.cache.insert(b.hash, (best_so_far, best_board.clone()));
         (best_so_far,best_board)
     }
