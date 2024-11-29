@@ -28,17 +28,20 @@ pub fn count_neighbors(board: u32) -> (u32, u32) {
 #[derive(Debug,Clone)]
 pub struct Board {
     // bitboards for both players
-    upright_cells: [u32; 2],
-    flipped_cells: [u32; 2],
+    //upright_cells: [u32; 2],
+    //flipped_cells: [u32; 2],
+    nonempty: u32,
+    player: u32,
+    flipped: u32,
     // precomputed hash
     hash: u64,
 }
 impl Board {
     pub fn new() -> Self {
-        Self { upright_cells: [0, 0], flipped_cells: [0, 0], hash: 0, }
+        Self { nonempty: 0, player: 0, flipped: 0, hash: 0, }
     }
     pub fn score_one_player(&self, player: usize) -> (i32, i32) {
-        let board = self.upright_cells[player] | self.flipped_cells[player];
+        let board = if player != 0 { self.nonempty & self.player } else { self.nonempty & !self.player };
         let (has_3_neighs, has_2_neighs) = count_neighbors(board);
         return (has_3_neighs.count_ones() as i32, has_2_neighs.count_ones() as i32);
     }
@@ -49,11 +52,10 @@ impl Board {
         (s1.0 - s2.0, s1.1 - s2.1)
     }
     pub fn propagate(&mut self, player: usize) {
-        let board = self.upright_cells[player] | self.flipped_cells[player];
-        let to_flip = count_neighbors(board).0 & self.upright_cells[player];
+        let board = if player != 0 { self.nonempty & self.player } else { self.nonempty & !self.player };
+        let to_flip = count_neighbors(board).0 & !self.flipped;
+        self.flipped ^= to_flip;
         if to_flip != 0 {
-            self.upright_cells[player] ^= to_flip;
-            self.flipped_cells[player] ^= to_flip;
             let mut tmp = to_flip;
             while tmp != 0 {
                 let pos = tmp.trailing_zeros();
@@ -64,29 +66,28 @@ impl Board {
     }
     pub fn moves(self, player: usize) -> impl Iterator<Item = Board> {
         gen move {
-            let empty = !(self.flipped_cells[0] | self.flipped_cells[1] | self.upright_cells[0] | self.upright_cells[1]);
+            let empty = !self.nonempty;
             for c in 0..25 {
                 if empty & (1<<c) != 0 {
                     let mut b = self.clone();
-                    b.upright_cells[player] |= 1<<c;
+                    b.nonempty |= 1<<c;
+                    b.player |= (1<<c)*(player as u32);
                     b.hash ^= get_zobrist(c, player as u8);
                     b.propagate(player as usize);
                     yield b;
                 }
             }
-            let swaplegal = self.upright_cells[0] | self.upright_cells[1];
+            let swaplegal = self.nonempty & !self.flipped;
             for i in 0..25 {
                 if swaplegal & (1<<i) == 0 { continue; }
                 for j in i+1..25 {
                     if swaplegal & (1<<j) == 0 { continue; }
                     let mut b = self.clone();
                     // 0 if cell i is owned by player 0, 1 if owned by player 1
-                    let i_player = (self.upright_cells[1] & (1<<i) != 0) as usize;
-                    let j_player = (self.upright_cells[1] & (1<<j) != 0) as usize;
-                    b.upright_cells[i_player] ^= 1<<i;
-                    b.upright_cells[j_player] ^= 1<<j;
-                    b.flipped_cells[i_player] |= 1<<j;
-                    b.flipped_cells[j_player] |= 1<<i;
+                    let i_player = (self.player >> i) & 1;
+                    let j_player = (self.player >> j) & 1;
+                    b.flipped |= 1<<i | 1<<j;
+                    if i_player != j_player { b.player ^= 1<<i | 1<<j; }
                     let el1 = i_player as u8;
                     let el2 = j_player as u8;
                     b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1+2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2+2);
@@ -100,10 +101,9 @@ impl Board {
         // this is slow, to be used for correctness verification only
         let mut hash = 0u64;
         for i in 0..25 {
-            if self.upright_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 0); }
-            if self.upright_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 1); }
-            if self.flipped_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 2); }
-            if self.flipped_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 3); }
+            if self.nonempty >> i & 1 != 0 {
+                hash ^= get_zobrist(i, ((self.flipped >> i & 1) << 1) as u8 | (self.player >> i & 1) as u8);
+            }
         }
         hash
     }
@@ -116,10 +116,10 @@ impl std::fmt::Display for Board {
         for i in 0..25 {
             if i != 0 && i % WIDTH == 0 { writeln!(f)?; }
             let mut ch = '.';
-            if self.upright_cells[0] & (1<<i) != 0 { ch = 'x'; }
-            if self.upright_cells[1] & (1<<i) != 0 { ch = 'o'; }
-            if self.flipped_cells[0] & (1<<i) != 0 { ch = 'X'; }
-            if self.flipped_cells[1] & (1<<i) != 0 { ch = 'O'; }
+            if self.nonempty >> i & 1 != 0 {
+                // i hate this
+                ch = b"xoXO"[(((self.flipped >> i & 1) << 1) | (self.player >> i & 1)) as usize] as char;
+            }
             write!(f, "{}", ch)?;
         }
         Ok(())
@@ -173,7 +173,7 @@ impl Solver {
         self.cache.clear();
         let alpha = (i32::MIN, i32::MIN);
         let beta = (i32::MAX, i32::MAX);
-        let (_s,br) = self.minimax(&b, player, 6, alpha, beta);
+        let (_s,br) = self.minimax(&b, player, 5, alpha, beta);
         br
     }
 }
