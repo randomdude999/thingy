@@ -177,8 +177,9 @@ impl Solver {
 
     pub fn solve(&mut self, b: &Board, player: usize) -> Option<Board> {
         let mut res = None;
-        let start_depth = if self.use_old_cache { 6 } else { 4 };
-        for depth in start_depth..=6 {
+        const FULLDEPTH: i32 = 6;
+        let start_depth = if self.use_old_cache { FULLDEPTH } else { 4 };
+        for depth in start_depth..=FULLDEPTH {
             //println!("depth {}...", depth);
             let alpha = (i32::MIN, i32::MIN);
             let beta = (i32::MAX, i32::MAX);
