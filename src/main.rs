@@ -25,7 +25,7 @@ pub fn count_neighbors(board: u32) -> (u32, u32) {
     (has_3_neighs, has_2_neighs)
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
     // bitboards for both players
     //upright_cells: [u32; 2],
@@ -129,6 +129,8 @@ impl std::fmt::Display for Board {
 #[derive(Default)]
 pub struct Solver {
     cache: ahash::AHashMap<BoardHash, ((i32,i32),Option<Board>)>,
+    old_cache: ahash::AHashMap<BoardHash, ((i32,i32),Option<Board>)>,
+    use_old_cache: bool,
 }
 
 const PLAYER_HASH: u64 = 0x1337;
@@ -140,10 +142,14 @@ impl Solver {
             return (b.score(), None);
         }
         let bhash = b.hash ^ PLAYER_HASH*(player as u64);
+        // if we've seen this state on this iteration...
         if let Some((i,b)) = self.cache.get(&bhash) { return (*i,b.clone()); }
         let mut best_so_far = (0,0);
         let mut best_board = None;
-        for board in b.clone().moves(player) {
+        // if we have a previous best, check it first
+        let prev_best = self.old_cache.get(&bhash).and_then(|v| v.1.clone());
+        let the_iter = prev_best.iter().cloned().chain(b.clone().moves(player).filter(|x| Some(x) != prev_best.as_ref()));
+        for board in the_iter {
             let (s,_b) = self.minimax(&board, player^1, depth-1, alpha, beta);
             let better = if player == 0 {
                 s > best_so_far
@@ -170,11 +176,19 @@ impl Solver {
     }
 
     pub fn solve(&mut self, b: &Board, player: usize) -> Option<Board> {
-        self.cache.clear();
-        let alpha = (i32::MIN, i32::MIN);
-        let beta = (i32::MAX, i32::MAX);
-        let (_s,br) = self.minimax(&b, player, 5, alpha, beta);
-        br
+        let mut res = None;
+        let start_depth = if self.use_old_cache { 6 } else { 4 };
+        for depth in start_depth..=6 {
+            //println!("depth {}...", depth);
+            let alpha = (i32::MIN, i32::MIN);
+            let beta = (i32::MAX, i32::MAX);
+            let (_s,br) = self.minimax(&b, player, depth, alpha, beta);
+            res = br;
+            std::mem::swap(&mut self.cache, &mut self.old_cache);
+            self.cache.clear();
+        }
+        self.use_old_cache = true;
+        res
     }
 }
 
