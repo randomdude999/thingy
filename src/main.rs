@@ -135,11 +135,11 @@ pub struct Solver {
 
 const PLAYER_HASH: u64 = 0x1337;
 impl Solver {
-    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32, mut alpha: i32, mut beta: i32) -> (i32,Option<Board>) {
+    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32, mut alpha: i32, beta: i32) -> (i32,Option<Board>) {
         debug_assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
         if depth == 0 {
-            return (b.score(), None);
+            return (b.score() * (1 - 2 * player as i32), None);
         }
         let bhash = b.hash ^ PLAYER_HASH*(player as u64);
         // if we've seen this state on this iteration...
@@ -150,25 +150,13 @@ impl Solver {
         let prev_best = self.old_cache.get(&bhash).and_then(|v| v.1.clone());
         let the_iter = prev_best.iter().cloned().chain(b.clone().moves(player).filter(|x| Some(x) != prev_best.as_ref()));
         for board in the_iter {
-            let (s,_b) = self.minimax(&board, player^1, depth-1, alpha, beta);
-            let better = if player == 0 {
-                s > best_so_far
-            } else {
-                s < best_so_far
-            };
-            if best_board.is_none() || better {
+            let s = -self.minimax(&board, player^1, depth-1, -beta, -alpha).0;
+            if best_board.is_none() || s > best_so_far {
                 best_so_far = s;
                 best_board = Some(board);
             }
-
-            // straight outta wikipedia
-            if player == 0 {
-                if s > beta { break; }
-                alpha = alpha.max(s);
-            } else {
-                if s < alpha { break; }
-                beta = beta.min(s);
-            }
+            alpha = alpha.max(s);
+            if alpha >= beta { break; }
         }
         if best_board.is_none() { best_so_far = b.score(); }
         self.cache.insert(bhash, (best_so_far, best_board.clone()));
@@ -177,11 +165,11 @@ impl Solver {
 
     pub fn solve(&mut self, b: &Board, player: usize) -> Option<Board> {
         let mut res = None;
-        const FULLDEPTH: i32 = 6;
+        const FULLDEPTH: i32 = 7;
         let start_depth = if self.use_old_cache { FULLDEPTH } else { 4 };
         for depth in start_depth..=FULLDEPTH {
             //println!("depth {}...", depth);
-            let (_s,br) = self.minimax(&b, player, depth, i32::MIN, i32::MAX);
+            let (_s,br) = self.minimax(&b, player, depth, -i32::MAX, i32::MAX);
             res = br;
             std::mem::swap(&mut self.cache, &mut self.old_cache);
             self.cache.clear();
