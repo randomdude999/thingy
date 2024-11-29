@@ -8,11 +8,7 @@ pub const NEIGHBORS: i32 = 3;
 
 static mut ZOBRIST: [u64; WIDTH*HEIGHT*4] = [0; WIDTH*HEIGHT*4];
 fn get_zobrist(ind: usize, el: u8) -> u64 {
-    if el == 0 {
-        0
-    } else {
-        unsafe { ZOBRIST[ind*4 + (el & 3) as usize] }
-    }
+    unsafe { ZOBRIST[ind*4 + (el & 3) as usize] }
 }
 
 /// returns bitmasks of positions with 3 and 2 neighbors
@@ -24,23 +20,17 @@ pub fn count_neighbors(board: u32) -> (u32, u32) {
     // magic formulas by the walrus
     let has_2_neighs = (a&b) | (c&d) | ((a|b)&(c|d));
     let has_3_neighs = ((a&b)&(c|d)) | ((a|b)&(c&d));
+    // a better heuristic would be "has 2 neighbors and a spot where a 3rd one could be",
+    // but that's much harder to compute
     (has_3_neighs, has_2_neighs)
 }
 
 #[derive(Debug,Clone)]
 pub struct Board {
-    // bit 0: player 1/2
-    // bit 1: upright/flipped
-    // bit 2: empty/full
-    // thus: empty is still value 0
-    // "ignore flippedness" is &5
-    //cells: [u8;WIDTH*HEIGHT],
-    // bitboards
+    // bitboards for both players
     upright_cells: [u32; 2],
     flipped_cells: [u32; 2],
-    // precomputed score
-    //score: i32,
-    // precomp hash
+    // precomputed hash
     hash: u64,
 }
 impl Board {
@@ -52,6 +42,7 @@ impl Board {
         let (has_3_neighs, has_2_neighs) = count_neighbors(board);
         return (has_3_neighs.count_ones() as i32, has_2_neighs.count_ones() as i32);
     }
+    /// score relative to player 0, i.e. player 0 winning is positive
     pub fn score(&self) -> (i32, i32) {
         let s1 = self.score_one_player(0);
         let s2 = self.score_one_player(1);
@@ -66,7 +57,7 @@ impl Board {
             let mut tmp = to_flip;
             while tmp != 0 {
                 let pos = tmp.trailing_zeros();
-                self.hash ^= get_zobrist(pos as usize, 4 + player as u8) ^ get_zobrist(pos as usize, 6 + player as u8);
+                self.hash ^= get_zobrist(pos as usize, player as u8) ^ get_zobrist(pos as usize, 2 + player as u8);
                 tmp ^= 1<<pos;
             }
         }
@@ -78,7 +69,7 @@ impl Board {
                 if empty & (1<<c) != 0 {
                     let mut b = self.clone();
                     b.upright_cells[player] |= 1<<c;
-                    b.hash ^= get_zobrist(c, 4 + player as u8);
+                    b.hash ^= get_zobrist(c, player as u8);
                     b.propagate(player as usize);
                     yield b;
                 }
@@ -96,9 +87,9 @@ impl Board {
                     b.upright_cells[j_player] ^= 1<<j;
                     b.flipped_cells[i_player] |= 1<<j;
                     b.flipped_cells[j_player] |= 1<<i;
-                    let el1 = 4 + i_player as u8;
-                    let el2 = 4 + j_player as u8;
-                    b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1|2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2|2);
+                    let el1 = i_player as u8;
+                    let el2 = j_player as u8;
+                    b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1+2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2+2);
                     b.propagate(player as usize);
                     yield b;
                 }
@@ -106,13 +97,13 @@ impl Board {
         }.into_iter()
     }
     pub fn hash(&self) -> u64 {
-        //self.cells.iter().enumerate().fold(0u64, |a, (i, &e)| a ^ get_zobrist(i, e))
+        // this is slow, to be used for correctness verification only
         let mut hash = 0u64;
         for i in 0..25 {
-            if self.upright_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 4); }
-            if self.upright_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 5); }
-            if self.flipped_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 6); }
-            if self.flipped_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 7); }
+            if self.upright_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 0); }
+            if self.upright_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 1); }
+            if self.flipped_cells[0] & (1<<i) != 0 { hash ^= get_zobrist(i, 2); }
+            if self.flipped_cells[1] & (1<<i) != 0 { hash ^= get_zobrist(i, 3); }
         }
         hash
     }
