@@ -40,16 +40,16 @@ impl Board {
     pub fn new() -> Self {
         Self { nonempty: 0, player: 0, flipped: 0, hash: 0, }
     }
-    pub fn score_one_player(&self, player: usize) -> (i32, i32) {
+    pub fn score_one_player(&self, player: usize) -> i32 {
         let board = if player != 0 { self.nonempty & self.player } else { self.nonempty & !self.player };
         let (has_3_neighs, has_2_neighs) = count_neighbors(board);
-        return (has_3_neighs.count_ones() as i32, has_2_neighs.count_ones() as i32);
+        (has_3_neighs.count_ones() * 1000 + has_2_neighs.count_ones()) as i32
     }
     /// score relative to player 0, i.e. player 0 winning is positive
-    pub fn score(&self) -> (i32, i32) {
-        let s1 = self.score_one_player(0);
-        let s2 = self.score_one_player(1);
-        (s1.0 - s2.0, s1.1 - s2.1)
+    pub fn score(&self) -> i32 {
+        let s0 = self.score_one_player(0);
+        let s1 = self.score_one_player(1);
+        s0 - s1
     }
     pub fn propagate(&mut self, player: usize) {
         let board = if player != 0 { self.nonempty & self.player } else { self.nonempty & !self.player };
@@ -128,14 +128,14 @@ impl std::fmt::Display for Board {
 
 #[derive(Default)]
 pub struct Solver {
-    cache: ahash::AHashMap<BoardHash, ((i32,i32),Option<Board>)>,
-    old_cache: ahash::AHashMap<BoardHash, ((i32,i32),Option<Board>)>,
+    cache: ahash::AHashMap<BoardHash, (i32, Option<Board>)>,
+    old_cache: ahash::AHashMap<BoardHash, (i32, Option<Board>)>,
     use_old_cache: bool,
 }
 
 const PLAYER_HASH: u64 = 0x1337;
 impl Solver {
-    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32, mut alpha: (i32,i32), mut beta: (i32,i32)) -> ((i32,i32),Option<Board>) {
+    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32, mut alpha: i32, mut beta: i32) -> (i32,Option<Board>) {
         debug_assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
         if depth == 0 {
@@ -144,7 +144,7 @@ impl Solver {
         let bhash = b.hash ^ PLAYER_HASH*(player as u64);
         // if we've seen this state on this iteration...
         if let Some((i,b)) = self.cache.get(&bhash) { return (*i,b.clone()); }
-        let mut best_so_far = (0,0);
+        let mut best_so_far = 0;
         let mut best_board = None;
         // if we have a previous best, check it first
         let prev_best = self.old_cache.get(&bhash).and_then(|v| v.1.clone());
@@ -164,10 +164,10 @@ impl Solver {
             // straight outta wikipedia
             if player == 0 {
                 if s > beta { break; }
-                alpha = std::cmp::max(alpha, s);
+                alpha = alpha.max(s);
             } else {
                 if s < alpha { break; }
-                beta = std::cmp::min(beta, s);
+                beta = beta.min(s);
             }
         }
         if best_board.is_none() { best_so_far = b.score(); }
@@ -181,9 +181,7 @@ impl Solver {
         let start_depth = if self.use_old_cache { FULLDEPTH } else { 4 };
         for depth in start_depth..=FULLDEPTH {
             //println!("depth {}...", depth);
-            let alpha = (i32::MIN, i32::MIN);
-            let beta = (i32::MAX, i32::MAX);
-            let (_s,br) = self.minimax(&b, player, depth, alpha, beta);
+            let (_s,br) = self.minimax(&b, player, depth, i32::MIN, i32::MAX);
             res = br;
             std::mem::swap(&mut self.cache, &mut self.old_cache);
             self.cache.clear();
