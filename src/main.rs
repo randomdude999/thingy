@@ -130,23 +130,21 @@ impl std::fmt::Display for Board {
 pub struct Solver {
     cache: ahash::AHashMap<BoardHash, ((i32,i32),Option<Board>)>,
 }
+
+const PLAYER_HASH: u64 = 0x1337;
 impl Solver {
-    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32) -> ((i32,i32),Option<Board>) {
+    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32, mut alpha: (i32,i32), mut beta: (i32,i32)) -> ((i32,i32),Option<Board>) {
         debug_assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
-        if depth >= 5 {
+        if depth == 0 {
             return (b.score(), None);
         }
-        if let Some((i,b)) = self.cache.get(&b.hash) { return (*i,b.clone()); }
-        let f = b.clone().moves(player);
-        //let mut child_avg = 0.0;
+        let bhash = b.hash ^ PLAYER_HASH*(player as u64);
+        if let Some((i,b)) = self.cache.get(&bhash) { return (*i,b.clone()); }
         let mut best_so_far = (0,0);
         let mut best_board = None;
-        let mut l = 0;
-        for (_idx,i) in f.enumerate() {
-            l += 1;
-            let (s,_b) = self.minimax(&i,player^1,depth+1);
-            //child_avg += s.1;
+        for board in b.clone().moves(player) {
+            let (s,_b) = self.minimax(&board, player^1, depth-1, alpha, beta);
             let better = if player == 0 {
                 s > best_so_far
             } else {
@@ -154,14 +152,29 @@ impl Solver {
             };
             if best_board.is_none() || better {
                 best_so_far = s;
-                best_board = Some(i);
+                best_board = Some(board);
+            }
+
+            // straight outta wikipedia
+            if player == 0 {
+                if s > beta { break; }
+                alpha = std::cmp::max(alpha, s);
+            } else {
+                if s < alpha { break; }
+                beta = std::cmp::min(beta, s);
             }
         }
-        //child_avg /= l as f32;
-        //best_so_far.1 = child_avg;
         if best_board.is_none() { best_so_far = b.score(); }
-        self.cache.insert(b.hash, (best_so_far, best_board.clone()));
+        self.cache.insert(bhash, (best_so_far, best_board.clone()));
         (best_so_far,best_board)
+    }
+
+    pub fn solve(&mut self, b: &Board, player: usize) -> Option<Board> {
+        self.cache.clear();
+        let alpha = (i32::MIN, i32::MIN);
+        let beta = (i32::MAX, i32::MAX);
+        let (_s,br) = self.minimax(&b, player, 6, alpha, beta);
+        br
     }
 }
 
@@ -183,13 +196,12 @@ fn main() {
     let mut turn = 0;
     init_zobrist();
     loop {
-        solver.cache.clear();
         if false && turn&1 == 1 {
             let moves: Vec<_> = b.moves(turn&1).collect();
             if moves.len() == 0 { return; }
             b = moves.choose(&mut rng).unwrap().clone();
         } else {
-            let (_s,br) = solver.minimax(&b, turn&1, 0);
+            let br = solver.solve(&b, turn&1);
             if br.is_none() { return; }
             b = br.unwrap();
         }
