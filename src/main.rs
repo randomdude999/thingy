@@ -38,19 +38,19 @@ impl Board {
     pub fn new() -> Self {
         Self { nonempty: 0, player: 0, flipped: 0, hash: 0, }
     }
-    pub fn score_one_player(&self, player: usize) -> i32 {
-        let board = if player != 0 { self.nonempty & self.player } else { self.nonempty & !self.player };
+    pub fn score_one_player(&self, player: bool) -> i32 {
+        let board = if player { self.nonempty & self.player } else { self.nonempty & !self.player };
         let (has_3_neighs, has_2_neighs) = count_neighbors(board);
         (has_3_neighs.count_ones() * 1000 + has_2_neighs.count_ones()) as i32
     }
     /// score relative to player 0, i.e. player 0 winning is positive
     pub fn score(&self) -> i32 {
-        let s0 = self.score_one_player(0);
-        let s1 = self.score_one_player(1);
+        let s0 = self.score_one_player(false);
+        let s1 = self.score_one_player(true);
         s0 - s1
     }
-    pub fn propagate(&mut self, player: usize) {
-        let board = if player != 0 { self.nonempty & self.player } else { self.nonempty & !self.player };
+    pub fn propagate(&mut self, player: bool) {
+        let board = if player { self.nonempty & self.player } else { self.nonempty & !self.player };
         let to_flip = count_neighbors(board).0 & !self.flipped;
         self.flipped ^= to_flip;
         if to_flip != 0 {
@@ -62,7 +62,7 @@ impl Board {
             }
         }
     }
-    pub fn moves(self, player: usize) -> impl Iterator<Item = Board> {
+    pub fn moves(self, player: bool) -> impl Iterator<Item = Board> {
         gen move {
             let empty = !self.nonempty;
             for c in 0..25 {
@@ -71,7 +71,7 @@ impl Board {
                     b.nonempty |= 1<<c;
                     b.player |= (1<<c)*(player as u32);
                     b.hash ^= get_zobrist(c, player as u8);
-                    b.propagate(player as usize);
+                    b.propagate(player);
                     yield b;
                 }
             }
@@ -89,7 +89,7 @@ impl Board {
                     let el1 = i_player as u8;
                     let el2 = j_player as u8;
                     b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1+2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2+2);
-                    b.propagate(player as usize);
+                    b.propagate(player);
                     yield b;
                 }
             }
@@ -133,7 +133,7 @@ pub struct Solver {
 
 const PLAYER_HASH: u64 = 0x1337;
 impl Solver {
-    pub fn minimax(&mut self, b: &Board, player: usize, depth: i32, mut alpha: i32, beta: i32) -> (i32,Option<Board>) {
+    pub fn minimax(&mut self, b: &Board, player: bool, depth: i32, mut alpha: i32, beta: i32) -> (i32,Option<Board>) {
         debug_assert!(b.hash() == b.hash);
         //assert!(b.score() == b.score);
         if depth == 0 {
@@ -148,7 +148,7 @@ impl Solver {
         let prev_best = self.old_cache.get(&bhash).and_then(|v| v.1.clone());
         let the_iter = prev_best.iter().cloned().chain(b.clone().moves(player).filter(|x| Some(x) != prev_best.as_ref()));
         for board in the_iter {
-            let s = -self.minimax(&board, player^1, depth-1, -beta, -alpha).0;
+            let s = -self.minimax(&board, !player, depth-1, -beta, -alpha).0;
             if best_board.is_none() || s > best_so_far {
                 best_so_far = s;
                 best_board = Some(board);
@@ -161,7 +161,7 @@ impl Solver {
         (best_so_far,best_board)
     }
 
-    pub fn solve(&mut self, b: &Board, player: usize) -> Option<Board> {
+    pub fn solve(&mut self, b: &Board, player: bool) -> Option<Board> {
         let mut res = None;
         const FULLDEPTH: i32 = 7;
         let start_depth = if self.use_old_cache { FULLDEPTH } else { 4 };
@@ -196,11 +196,11 @@ fn main() {
     init_zobrist();
     loop {
         if false && turn&1 == 1 {
-            let moves: Vec<_> = b.moves(turn&1).collect();
+            let moves: Vec<_> = b.moves(turn&1 == 1).collect();
             if moves.len() == 0 { return; }
             b = moves.choose(&mut rng).unwrap().clone();
         } else {
-            let br = solver.solve(&b, turn&1);
+            let br = solver.solve(&b, turn&1 == 1);
             if br.is_none() { return; }
             b = br.unwrap();
         }
