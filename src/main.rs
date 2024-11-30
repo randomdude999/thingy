@@ -89,7 +89,9 @@ impl Board {
                     let el1 = i_player as u8;
                     let el2 = j_player as u8;
                     b.hash ^= get_zobrist(i, el1) ^ get_zobrist(j, el1+2) ^ get_zobrist(j, el2) ^ get_zobrist(i, el2+2);
-                    b.propagate(player);
+                    if i_player != j_player {
+                        b.propagate(false); b.propagate(true);
+                    }
                     yield b;
                 }
             }
