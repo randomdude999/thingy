@@ -1,7 +1,5 @@
 #![feature(gen_blocks)]
 
-use rand::SeedableRng;
-
 pub const WIDTH: usize = 5;
 pub const HEIGHT: usize = 5;
 pub const NEIGHBORS: i32 = 3;
@@ -27,11 +25,11 @@ pub fn count_neighbors(board: u32) -> (u32, u32) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
-    // bitboards for both players
-    //upright_cells: [u32; 2],
-    //flipped_cells: [u32; 2],
+    // bitboards: whether this cell is occupied at all
     nonempty: u32,
+    // if nonempty, does player 1 own this cell
     player: u32,
+    // if nonempty, is this piece flipped
     flipped: u32,
     // precomputed hash
     hash: u64,
@@ -180,7 +178,7 @@ impl Solver {
 }
 
 fn init_zobrist() {
-    use rand::RngCore;
+    use rand::{RngCore, SeedableRng};
     let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
     for i in 0..WIDTH*HEIGHT*4 {
         unsafe {
