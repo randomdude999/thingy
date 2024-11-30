@@ -42,6 +42,8 @@ impl Board {
         let s1 = self.score_one_player(true);
         s0 - s1
     }
+    /// update cells that now have >=3 neighbors and should be flipped over.
+    /// only checks for one player's pieces at a time.
     pub fn propagate(&mut self, player: bool) {
         let board = if player { self.nonempty & self.player } else { self.nonempty & !self.player };
         let to_flip = count_neighbors(board).0 & !self.flipped;
@@ -69,6 +71,11 @@ impl Board {
                     let i_player = (self.player >> i) & 1;
                     let j_player = (self.player >> j) & 1;
                     b.flipped |= 1<<i | 1<<j;
+                    // if both were owned by the same player, no piece's
+                    // neighbor counts changed, so no need to propagate. if by
+                    // different players, then each one could cause points for
+                    // their respective players, so we need to propagate for
+                    // both players.
                     if i_player != j_player {
                         b.player ^= 1<<i | 1<<j;
                         b.propagate(false); b.propagate(true);
@@ -110,13 +117,18 @@ impl Solver {
             return (b.score() * (1 - 2 * player as i32), None);
         }
         let bhash = (b.clone(), player);
-        // if we've seen this state on this iteration...
+        // if we've seen this state on this iteration, return a cached result
         if let Some((i,b)) = self.cache.get(&bhash) { return (*i,b.clone()); }
         let mut best_so_far = 0;
         let mut best_board = None;
-        // if we have a previous best, check it first
+        // if we have a previous best,
         let prev_best = self.old_cache.get(&bhash).and_then(|v| v.1.clone());
-        let the_iter = prev_best.iter().cloned().chain(b.clone().moves(player).filter(|x| Some(x) != prev_best.as_ref()));
+        // then evaluate it first,
+        let the_iter = prev_best.iter().cloned().chain(
+            // and then evaluate the rest of the moves in the normal order,
+            // skipping the already-done best move
+            b.clone().moves(player).filter(|x| Some(x) != prev_best.as_ref())
+        );
         for board in the_iter {
             let s = -self.minimax(&board, !player, depth-1, -beta, -alpha).0;
             if best_board.is_none() || s > best_so_far {
