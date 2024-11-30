@@ -86,7 +86,6 @@ impl Board {
         }.into_iter()
     }
 }
-type BoardHash = (Board, bool);
 
 impl std::fmt::Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -110,13 +109,20 @@ pub struct Solver {
     old_cache: ahash::AHashMap<BoardHash, (i32, Option<Board>)>,
     use_old_cache: bool,
 }
+type BoardHash = u64;
 
+fn hash_board(b: &Board, player: bool) -> u64 {
+    ((b.player as u64) << 32 | b.flipped as u64)
+        ^ (b.nonempty as u64 * 0xdad86b09)
+        ^ ((player as u64) << 63)
+}
 impl Solver {
+
     pub fn minimax(&mut self, b: &Board, player: bool, depth: i32, mut alpha: i32, beta: i32) -> (i32,Option<Board>) {
         if depth == 0 {
             return (b.score() * (1 - 2 * player as i32), None);
         }
-        let bhash = (b.clone(), player);
+        let bhash = hash_board(b, player);
         // if we've seen this state on this iteration, return a cached result
         if let Some((i,b)) = self.cache.get(&bhash) { return (*i,b.clone()); }
         let mut best_so_far = 0;
